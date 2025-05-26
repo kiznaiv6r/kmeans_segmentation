@@ -1,0 +1,220 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сегментация изображений</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'segmentation/style.css' %}">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <h1 class="display-5 fw-bold text-center mb-5">Сегментация изображений</h1>
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="card shadow-lg mb-4">
+                    <div class="card-body">
+                        <form method="post" enctype="multipart/form-data" id="upload-form">
+                            {% csrf_token %}
+                            <div class="drop-zone d-flex justify-content-center align-items-center position-relative mb-3" id="dropZone">
+                                <canvas id="previewCanvas" class="d-none w-100 h-100"></canvas>
+                                <span id="dropText" class="text-center">Перетащите изображение сюда или нажмите (PNG/JPEG)</span>
+                            </div>
+                            <input type="file" name="image" id="fileInput" accept=".png,.jpg,.jpeg" class="d-none">
+                            <div class="mb-3">
+                                <label for="kValue" class="form-label">Количество кластеров (k): <span id="kDisplay">Auto</span></label>
+                                <input type="range" class="form-range" id="kValue" name="k" min="0" max="10" value="0">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Сегментировать изображение</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if segmented_image %}
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <h2 class="h3 fw-bold text-center mb-4">Сравнение изображений</h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card shadow-lg">
+                            <div class="card-body text-center">
+                                <h3 class="h5 fw-bold mb-3">Оригинальное изображение</h3>
+                                <canvas id="originalCanvas" class="image-canvas mx-auto"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card shadow-lg">
+                            <div class="card-body text-center">
+                                <h3 class="h5 fw-bold mb-3">Сегментированное изображение</h3>
+                                <canvas id="imageCanvas" class="image-canvas mx-auto"></canvas>
+                                <div class="mt-3">
+                                    <label for="colorPicker" class="form-label">Выберите цвет для сегмента:</label>
+                                    <input type="color" id="colorPicker" value="#ff0000" class="form-control form-control-color d-inline-block">
+                                </div>
+                                <p class="text-muted small mt-2">Кликните на сегмент для перекраски</p>
+                                <div class="d-flex gap-2 justify-content-center mt-3">
+                                    <form id="download-form" action="{% url 'download_image' %}" method="get">
+                                        <button type="submit" class="btn btn-success">Скачать</button>
+                                    </form>
+                                    <button id="undo-button" class="btn btn-outline-secondary">Отменить раскраску</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <form id="recolor-form" class="d-none">
+            <input type="hidden" name="x" id="clickX">
+            <input type="hidden" name="y" id="clickY">
+            <input type="hidden" name="color" id="colorValue">
+            <input type="hidden" name="image_path" value="{{ image_path }}">
+            <input type="hidden" name="k" value="{{ k }}">
+            <input type="hidden" name="height" value="{{ height }}">
+            <input type="hidden" name="width" value="{{ width }}">
+            <input type="hidden" name="canvas_width" id="canvasWidth">
+            <input type="hidden" name="canvas_height" id="canvasHeight">
+        </form>
+        {% endif %}
+
+        <div class="toast-container position-fixed bottom-0 end-0 p-3">
+            <div id="errorToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="toast-header">
+                    <strong class="me-auto">Ошибка</strong>
+                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading" class="loading">Загрузка...</div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{% static 'segmentation/script.js' %}"></script>
+    <script>
+        // Динамический JavaScript
+        {% if segmented_image %}
+        const originalCanvas = document.getElementById('originalCanvas');
+        if (originalCanvas) {
+            const originalCtx = originalCanvas.getContext('2d');
+            const originalImg = new Image();
+            originalImg.src = 'data:image/png;base64,{{ original_image }}';
+            originalImg.onload = function() {
+                originalCanvas.width = 300;
+                originalCanvas.height = 300;
+                originalCtx.drawImage(originalImg, 0, 0, 300, 300);
+            };
+        }
+
+        const canvas = document.getElementById('imageCanvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.src = 'data:image/png;base64,{{ segmented_image }}';
+            img.onload = function() {
+                canvas.width = 300;
+                canvas.height = 300;
+                ctx.drawImage(img, 0, 0, 300, 300);
+            };
+
+            document.getElementById('canvasWidth').value = canvas.offsetWidth;
+            document.getElementById('canvasHeight').value = canvas.offsetHeight;
+
+            canvas.addEventListener('click', function(event) {
+                console.log("Клик по сегментированному изображению");
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                const color = document.getElementById('colorPicker').value;
+
+                document.getElementById('clickX').value = x;
+                document.getElementById('clickY').value = y;
+                document.getElementById('colorValue').value = color;
+
+                const formData = new FormData(document.getElementById('recolor-form'));
+                fetch('{% url "recolor" %}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {'X-CSRFToken': '{{ csrf_token }}'}
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        const toast = new bootstrap.Toast(document.getElementById('errorToast'));
+                        document.getElementById('errorToast').getElementsByClassName('toast-body')[0].textContent = data.error;
+                        toast.show();
+                    } else {
+                        img.src = 'data:image/png;base64,' + data.segmented_image;
+                        img.onload = function() {
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            canvas.width = 300;
+                            canvas.height = 300;
+                            ctx.drawImage(img, 0, 0, 300, 300);
+                        };
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка перекраски:', error);
+                    const toast = new bootstrap.Toast(document.getElementById('errorToast'));
+                    document.getElementById('errorToast').getElementsByClassName('toast-body')[0].textContent = 'Ошибка перекраски';
+                    toast.show();
+                });
+            });
+        }
+
+        const undoButton = document.getElementById('undo-button');
+        if (undoButton) {
+            undoButton.addEventListener('click', function() {
+                console.log("Клик по кнопке отмены");
+                fetch('{% url "undo" %}', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': '{{ csrf_token }}',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.log("Ошибка undo:", data.error);
+                        const toast = new bootstrap.Toast(document.getElementById('errorToast'));
+                        document.getElementById('errorToast').getElementsByClassName('toast-body')[0].textContent = data.error;
+                        toast.show();
+                    } else {
+                        const canvas = document.getElementById('imageCanvas');
+                        const ctx = canvas.getContext('2d');
+                        const img = new Image();
+                        img.src = 'data:image/png;base64,' + data.segmented_image;
+                        img.onload = function() {
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            canvas.width = 300;
+                            canvas.height = 300;
+                            ctx.drawImage(img, 0, 0, 300, 300);
+                            console.log("Изображение обновлено после отмены");
+                        };
+                        img.onerror = function() {
+                            console.error("Ошибка загрузки изображения после отмены");
+                            const toast = new bootstrap.Toast(document.getElementById('errorToast'));
+                            document.getElementById('errorToast').getElementsByClassName('toast-body')[0].textContent = 'Ошибка загрузки изображения';
+                            toast.show();
+                        };
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка undo:', error);
+                    const toast = new bootstrap.Toast(document.getElementById('errorToast'));
+                    document.getElementById('errorToast').getElementsByClassName('toast-body')[0].textContent = 'Ошибка отмены';
+                    toast.show();
+                });
+            });
+        }
+        {% endif %}
+    </script>
+</body>
+</html>
